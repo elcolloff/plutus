@@ -7,15 +7,14 @@ module Transform.Inline.Spec where
 
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.State (runStateT)
-import Data.Text qualified as Text
-import GHC.Exts (fromList)
 import PlutusCore.Annotation (Inline (MayInline))
 import PlutusCore.Default (DefaultFun (..), DefaultUni)
-import PlutusCore.Name.Unique (Name (..), Unique (..))
+import PlutusCore.Name.Unique (Name)
 import PlutusCore.Quote (runQuote)
 import PlutusPrelude (def)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase)
+import Transform.Lib (T, app, builtin, case_, delay, freshNames3, freshNames4, lam, var)
 import UntypedPlutusCore.AstSize (AstSize (..))
 import UntypedPlutusCore.Core (Term (..))
 import UntypedPlutusCore.Transform.Inline
@@ -72,12 +71,12 @@ testVarBeforeAfterEffects = do
 
         1. pure work-free: a
         2. pure work-free: b
-        3. impure? maybe work?: addInteger a b
+        3. impure? maybe work?: plus a b
         4. pure work-free: c
-        5. impure? maybe work?: addInteger (addInteger a b) c
+        5. impure? maybe work?: plus (plus a b) c
       -}
-      addInteger (addInteger (var a) (var b)) (var c)
-    (a, b, c, _) = makeUniqueNames
+      plus (plus (var a) (var b)) (var c)
+    (a, b, c) = freshNames3 "a" "b" "c"
 
 testVarIsEventuallyEvaluatedDelay :: Assertion
 testVarIsEventuallyEvaluatedDelay = do
@@ -89,9 +88,9 @@ testVarIsEventuallyEvaluatedDelay = do
     not (isStrictIn c term)
   where
     term :: Term Name DefaultUni DefaultFun ()
-    term = delay (var a `addInteger` var b) `addInteger` var b
+    term = delay (var a `plus` var b) `plus` var b
 
-    (a, b, c, _) = makeUniqueNames
+    (a, b, c) = freshNames3 "a" "b" "c"
 
 testVarIsEventuallyEvaluatedLambda :: Assertion
 testVarIsEventuallyEvaluatedLambda = do
@@ -103,9 +102,9 @@ testVarIsEventuallyEvaluatedLambda = do
     not (isStrictIn d term)
   where
     term :: Term Name DefaultUni DefaultFun ()
-    term = lam b (var a `addInteger` var c) `app` var c
+    term = lam b (var a `plus` var c) `app` var c
 
-    (a, b, c, d) = makeUniqueNames
+    (a, b, c, d) = freshNames4 "a" "b" "c" "d"
 
 testVarIsEventuallyEvaluatedCaseBranch :: Assertion
 testVarIsEventuallyEvaluatedCaseBranch = do
@@ -119,7 +118,7 @@ testVarIsEventuallyEvaluatedCaseBranch = do
     term :: Term Name DefaultUni DefaultFun ()
     term = case_ (var b) [var a, var b, var c]
 
-    (a, b, c, d) = makeUniqueNames
+    (a, b, c, d) = freshNames4 "a" "b" "c" "d"
 
 testEffectSafePreservedLogs :: Assertion
 testEffectSafePreservedLogs = do
@@ -129,9 +128,9 @@ testEffectSafePreservedLogs = do
     runInlineWithLogging (effectSafe term a False)
   where
     term :: Term Name DefaultUni DefaultFun ()
-    term = (var a `addInteger` var b) `addInteger` var c
+    term = (var a `plus` var b) `plus` var c
 
-    (a, b, c, _) = makeUniqueNames
+    (a, b, c) = freshNames3 "a" "b" "c"
 
 testEffectSafeWithoutPreservedLogs :: Assertion
 testEffectSafeWithoutPreservedLogs = do
@@ -141,9 +140,9 @@ testEffectSafeWithoutPreservedLogs = do
     runInlineWithoutLogging (effectSafe term a False)
   where
     term :: Term Name DefaultUni DefaultFun ()
-    term = (var a `addInteger` var b) `addInteger` var c
+    term = (var a `plus` var b) `plus` var c
 
-    (a, b, c, _) = makeUniqueNames
+    (a, b, c) = freshNames3 "a" "b" "c"
 
 --------------------------------------------------------------------------------
 -- InlineM runner --------------------------------------------------------------
@@ -174,36 +173,7 @@ runInlineM preserveLogging m = result
     initialState = S {_subst = Subst (TermEnv mempty), _vars = mempty}
 
 --------------------------------------------------------------------------------
--- UPLC Term constructors ------------------------------------------------------
+-- Local helpers ---------------------------------------------------------------
 
-type T = Term Name DefaultUni DefaultFun ()
-
-var :: Name -> T
-var = Var ()
-
-lam :: Name -> T -> T
-lam = LamAbs ()
-
-app :: T -> T -> T
-app = Apply ()
-
-delay :: T -> T
-delay = Delay ()
-
-case_ :: T -> [T] -> T
-case_ scrut branches = Case () scrut (fromList branches)
-
-addInteger :: T -> T -> T
-addInteger i j = builtin AddInteger `app` i `app` j
-
-builtin :: DefaultFun -> T
-builtin = Builtin ()
-
---------------------------------------------------------------------------------
--- Unique names ----------------------------------------------------------------
-
-makeUniqueNames :: (Name, Name, Name, Name)
-makeUniqueNames = (name "a" 0, name "b" 1, name "c" 2, name "d" 3)
-
-name :: String -> Int -> Name
-name n u = Name (Text.pack n) (Unique u)
+plus :: T -> T -> T
+plus i j = builtin AddInteger `app` i `app` j
