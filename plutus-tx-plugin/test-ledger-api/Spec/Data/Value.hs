@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -22,6 +23,7 @@ import PlutusTx.Numeric
 import PlutusTx.Prelude hiding (integerToByteString)
 import PlutusTx.Show (toDigits)
 import PlutusTx.TH (compile)
+import PlutusTx.Test.Run.Code (evaluationResultMatchesHaskell)
 import PlutusTx.Traversable qualified as Tx
 
 import PlutusCore.Builtin qualified as PLC
@@ -34,9 +36,12 @@ import Control.Exception qualified as Haskell
 import Data.Functor qualified as Haskell
 import Data.List qualified as Haskell
 import Data.Map qualified as Map
+import PlutusLedgerApi.Test.V1.Data.Value ()
 import Prettyprinter qualified as Pretty
+import Test.QuickCheck ((===))
 import Test.Tasty
 import Test.Tasty.Extras
+import Test.Tasty.QuickCheck (testProperty)
 
 scalingFactor :: Integer
 scalingFactor = 4
@@ -258,3 +263,17 @@ test_EqValue =
     $ [ test_EqCurrencyList "Short" currencyListOptions
       , test_EqCurrencyList "Long" currencyLongListOptions
       ]
+
+{-| Check that running the compiled fused 'unionWith' on CEK produces the
+same 'Value' as the host-Haskell implementation, for arbitrary pairs of
+'Value's. The combining function must come from 'PlutusTx.Prelude' so
+that Plinth can inline it into the compiled UPLC. -}
+test_unionWith :: TestTree
+test_unionWith =
+  testProperty "unionWith on CEK matches host Haskell" \value1 value2 ->
+    let compiled =
+          $$(compile [||\v1 v2 -> unionWith (+) v1 v2||])
+            `unsafeApplyCode` liftCodeDef value1
+            `unsafeApplyCode` liftCodeDef value2
+        expected = unionWith (+) value1 value2
+     in evaluationResultMatchesHaskell compiled (===) expected
